@@ -6,9 +6,9 @@ use sled;
 use tracing::{info, warn, error};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::lib::{
+use crate::{
     AirdropWallet as CoreWallet, SaplingNote, OrchardNote, 
-    ShieldedAirdropTransaction, NullifierSet, ProtocolError
+    ShieldedAirdropTransaction, NullifierSet, ProtocolError, PublicKey, ClaimDescription
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,45 +133,49 @@ impl AirdropWallet {
         
         self.db.flush()?;
         info!("Initialized wallet database");
-        
+         
         Ok(())
     }
     
     fn load_notes(&mut self) -> Result<()> {
         // Load Sapling notes
-        if let Some(sapling_tree) = self.db.open_tree("sapling_notes")? {
-            for result in sapling_tree.iter() {
-                let (key, value) = result?;
-                if let Ok(note_record) = bincode::deserialize::<SaplingNoteRecord>(&value) {
-                    self.core_wallet.add_sapling_note(note_record.note);
-                }
+        let sapling_tree = self.db.open_tree("sapling_notes")?;
+        for result in sapling_tree.iter() {
+            let (key, value) = result?;
+            if let Ok(note_record) = bincode::deserialize::<SaplingNoteRecord>(&value) {
+                self.core_wallet.add_sapling_note(note_record.note);
             }
         }
         
         // Load Orchard notes
-        if let Some(orchard_tree) = self.db.open_tree("orchard_notes")? {
-            for result in orchard_tree.iter() {
-                let (key, value) = result?;
-                if let Ok(note_record) = bincode::deserialize::<OrchardNoteRecord>(&value) {
-                    self.core_wallet.add_orchard_note(note_record.note);
-                }
+        let orchard_tree = self.db.open_tree("orchard_notes")?;
+        for result in orchard_tree.iter() {
+            let (key, value) = result?;
+            if let Ok(note_record) = bincode::deserialize::<OrchardNoteRecord>(&value) {
+                self.core_wallet.add_orchard_note(note_record.note);
             }
         }
         
         // Load nullifier sets
-        if let Some(nullifier_tree) = self.db.open_tree("nullifier_set")? {
-            for result in nullifier_tree.iter() {
-                let (key, _) = result?;
-                let nullifier: Vec<u8> = key.to_vec();
-                self.core_wallet.nullifier_set.insert(nullifier.try_into().unwrap());
+        let nullifier_tree = self.db.open_tree("nullifier_set")?;
+        for result in nullifier_tree.iter() {
+            let (key, _) = result?;
+            let nullifier: Vec<u8> = key.to_vec();
+            if nullifier.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&nullifier);
+                self.core_wallet.nullifier_set.insert(arr);
             }
         }
         
-        if let Some(airdrop_tree) = self.db.open_tree("airdrop_nullifier_set")? {
-            for result in airdrop_tree.iter() {
-                let (key, _) = result?;
-                let nullifier: Vec<u8> = key.to_vec();
-                self.core_wallet.airdrop_nullifier_set.insert(nullifier.try_into().unwrap());
+        let airdrop_tree = self.db.open_tree("airdrop_nullifier_set")?;
+        for result in airdrop_tree.iter() {
+            let (key, _) = result?;
+            let nullifier: Vec<u8> = key.to_vec();
+            if nullifier.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&nullifier);
+                self.core_wallet.airdrop_nullifier_set.insert(arr);
             }
         }
         
@@ -198,14 +202,15 @@ impl AirdropWallet {
         let note_bytes = bincode::serialize(&note_record)
             .with_context(|| "Failed to serialize Sapling note record")?;
         
-        if let Some(tree) = self.db.open_tree("sapling_notes")? {
-            tree.insert(note_id, note_bytes)?;
-        }
+        let tree = self.db.open_tree("sapling_notes")?;
+        tree.insert(note_id.as_bytes(), note_bytes)?;
+        tree.flush()?;
         
         // Add to core wallet
         self.core_wallet.add_sapling_note(note);
         
-        info!("Added Sapling note with value {} zatoshis", note_record.note.value);
+        info!("Added Sapling note with value {} at position {}", note.value, note.position);
+        
         Ok(())
     }
     
@@ -225,14 +230,15 @@ impl AirdropWallet {
         let note_bytes = bincode::serialize(&note_record)
             .with_context(|| "Failed to serialize Orchard note record")?;
         
-        if let Some(tree) = self.db.open_tree("orchard_notes")? {
-            tree.insert(note_id, note_bytes)?;
-        }
+        let tree = self.db.open_tree("orchard_notes")?;
+        tree.insert(note_id.as_bytes(), note_bytes)?;
+        tree.flush()?;
         
         // Add to core wallet
         self.core_wallet.add_orchard_note(note);
         
-        info!("Added Orchard note with value {} zatoshis", note_record.note.value);
+        info!("Added Orchard note with value {} at position {}", note.value, note.position);
+        
         Ok(())
     }
     
@@ -416,26 +422,27 @@ impl AirdropWallet {
     }
     
     pub fn record_transaction(&mut self, tx: &ShieldedAirdropTransaction, tx_hash: &str) -> Result<()> {
-        // Extract amount and recipient if possible
-        let (amount, recipient) = match &tx.claim_description {
-            crate::lib::ClaimDescription::Sapling(claim) => (claim.value_commitment[0] as u64, "unknown".to_string()),
-            crate::lib::ClaimDescription::Orchard(claim) => (claim.value_commitment[0] as u64, "unknown".to_string()),
+        let airdrop_nullifier = tx.get_airdrop_nullifier();
+        let amount = match &tx.claim_description {
+            ClaimDescription::Sapling(claim) => claim.value_commitment[0] as u64,
+            ClaimDescription::Orchard(claim) => claim.value_commitment[0] as u64,
         };
+        
         let record = TransactionRecord {
             tx_hash: tx_hash.to_string(),
-            airdrop_nullifier: tx.get_airdrop_nullifier().to_vec(),
+            airdrop_nullifier: airdrop_nullifier.to_vec(),
             amount,
-            recipient,
+            recipient: "masp_recipient".to_string(), // Would be extracted from MASP description
             status: "pending".to_string(),
             created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
             confirmed_at: None,
             block_height: None,
         };
+        
         let record_bytes = bincode::serialize(&record)
             .with_context(|| "Failed to serialize transaction record")?;
-        if let Some(tree) = self.db.open_tree("transactions")? {
-            tree.insert(tx_hash, record_bytes)?;
-        }
+        let tree = self.db.open_tree("transactions")?;
+        tree.insert(tx_hash.as_bytes(), record_bytes)?;
         Ok(())
     }
     
@@ -504,36 +511,39 @@ impl AirdropWallet {
         let note_id = format!("{}_{}", note_type, position);
         let tree_name = format!("{}_notes", note_type);
         
-        if let Some(tree) = self.db.open_tree(&tree_name)? {
-            if let Some(value) = tree.get(&note_id)? {
-                match note_type {
-                    "sapling" => {
-                        if let Ok(mut note_record) = bincode::deserialize::<SaplingNoteRecord>(&value) {
-                            note_record.is_spent = true;
-                            note_record.last_used = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
-                            
-                            let updated_bytes = bincode::serialize(&note_record)
-                                .with_context(|| "Failed to serialize updated Sapling note record")?;
-                            tree.insert(note_id, updated_bytes)?;
-                            
-                            info!("Marked Sapling note at position {} as spent", position);
-                        }
-                    }
-                    "orchard" => {
-                        if let Ok(mut note_record) = bincode::deserialize::<OrchardNoteRecord>(&value) {
-                            note_record.is_spent = true;
-                            note_record.last_used = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
-                            
-                            let updated_bytes = bincode::serialize(&note_record)
-                                .with_context(|| "Failed to serialize updated Orchard note record")?;
-                            tree.insert(note_id, updated_bytes)?;
-                            
-                            info!("Marked Orchard note at position {} as spent", position);
-                        }
-                    }
-                    _ => return Err(anyhow::anyhow!("Invalid note type: {}", note_type)),
+        let tree = self.db.open_tree(&tree_name)?;
+        if let Some(value) = tree.get(&note_id.as_bytes())? {
+            match note_type {
+                "sapling" => {
+                    let mut note_record: SaplingNoteRecord = bincode::deserialize(&value)
+                        .with_context(|| "Failed to deserialize Sapling note record")?;
+                    note_record.is_spent = true;
+                    note_record.last_used = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+                    
+                    let updated_bytes = bincode::serialize(&note_record)
+                        .with_context(|| "Failed to serialize updated Sapling note record")?;
+                    tree.insert(note_id.as_bytes(), updated_bytes)?;
+                    
+                    info!("Marked Sapling note at position {} as spent", position);
+                }
+                "orchard" => {
+                    let mut note_record: OrchardNoteRecord = bincode::deserialize(&value)
+                        .with_context(|| "Failed to deserialize Orchard note record")?;
+                    note_record.is_spent = true;
+                    note_record.last_used = Some(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+                    
+                    let updated_bytes = bincode::serialize(&note_record)
+                        .with_context(|| "Failed to serialize updated Orchard note record")?;
+                    tree.insert(note_id.as_bytes(), updated_bytes)?;
+                    
+                    info!("Marked Orchard note at position {} as spent", position);
+                }
+                _ => {
+                    return Err(anyhow::anyhow!("Invalid note type: {}", note_type));
                 }
             }
+        } else {
+            return Err(anyhow::anyhow!("Note not found: {}", note_id));
         }
         
         Ok(())
@@ -557,6 +567,47 @@ impl AirdropWallet {
         }
         
         Ok(())
+    }
+
+    /// Create a Sapling->MASP airdrop transaction
+    pub fn create_sapling_to_masp_airdrop_tx(
+        &self,
+        note_index: usize,
+        airdrop_amount: u64,
+        masp_recipient: &PublicKey,
+    ) -> Result<ShieldedAirdropTransaction, ProtocolError> {
+        if note_index >= self.core_wallet.sapling_notes.len() {
+            return Err(ProtocolError("Invalid note index".to_string()));
+        }
+        let note = &self.core_wallet.sapling_notes[note_index];
+        let merkle_path = vec![[0u8; 32]; 32];
+        ShieldedAirdropTransaction::create_sapling_to_masp_airdrop(
+            note,
+            &merkle_path,
+            &self.core_wallet.nullifier_set,
+            airdrop_amount,
+            masp_recipient,
+        )
+    }
+    /// Create an Orchard->MASP airdrop transaction
+    pub fn create_orchard_to_masp_airdrop_tx(
+        &self,
+        note_index: usize,
+        airdrop_amount: u64,
+        masp_recipient: &PublicKey,
+    ) -> Result<ShieldedAirdropTransaction, ProtocolError> {
+        if note_index >= self.core_wallet.orchard_notes.len() {
+            return Err(ProtocolError("Invalid note index".to_string()));
+        }
+        let note = &self.core_wallet.orchard_notes[note_index];
+        let merkle_path = vec![[0u8; 32]; 32];
+        ShieldedAirdropTransaction::create_orchard_to_masp_airdrop(
+            note,
+            &merkle_path,
+            &self.core_wallet.nullifier_set,
+            airdrop_amount,
+            masp_recipient,
+        )
     }
 }
 

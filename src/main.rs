@@ -1,14 +1,13 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use tracing::{info, error, warn};
+use tracing::info;
 use anyhow::{Result, Context};
+use std::fs;
 
-mod wallet;
-mod config;
-
-
-use wallet::AirdropWallet;
-use config::Config;
+use zec_nam::{
+    AirdropWallet, ShieldedAirdropTransaction, SaplingNote, OrchardNote,
+    PublicKey, ProtocolError
+};
 
 #[derive(Parser)]
 #[command(name = "zec-nam")]
@@ -25,7 +24,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize a new wallet
-    Init {
+    InitWallet {
         #[arg(short, long)]
         name: Option<String>,
         
@@ -34,10 +33,10 @@ enum Commands {
     },
     
     /// Show wallet status and balance
-    Status,
+    ShowStatus,
     
     /// Import notes from Zcash wallet
-    Import {
+    ImportNotes {
         #[arg(short, long)]
         file: PathBuf,
         
@@ -82,19 +81,19 @@ enum Commands {
     },
     
     /// Show transaction details
-    ShowTx {
+    ShowTransaction {
         #[arg(short, long)]
         tx_file: PathBuf,
     },
     
     /// Connect to Zcash network and sync
-    Sync,
+    SyncWallet,
     
     /// Show network status
     NetworkStatus,
     
     /// Export wallet data
-    Export {
+    ExportWallet {
         #[arg(short, long)]
         file: PathBuf,
         
@@ -107,6 +106,30 @@ enum Commands {
         #[arg(short, long)]
         count: Option<usize>,
     },
+    
+    /// Create a Sapling->MASP or Orchard->MASP airdrop transaction
+    CreateMaspAirdrop {
+        #[arg(short, long)]
+        note_index: usize,
+        #[arg(short, long)]
+        amount: u64,
+        #[arg(short, long)]
+        masp_recipient: String,
+        #[arg(short, long)]
+        note_type: String, // "sapling" or "orchard"
+        #[arg(short, long)]
+        out_file: PathBuf,
+    },
+    /// Verify a MASP airdrop transaction
+    VerifyMaspAirdrop {
+        #[arg(short, long)]
+        tx_file: PathBuf,
+    },
+    /// Show MASP airdrop transaction details
+    ShowMaspAirdropTx {
+        #[arg(short, long)]
+        tx_file: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -117,63 +140,118 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     
     // Load configuration
-    let config = match cli.config {
-        Some(path) => Config::from_file(&path)?,
-        None => Config::default()?,
+    let config_path = cli.config;
+    // TODO: Implement config loading
+    let _config = match config_path {
+        Some(ref _path) => {
+            // TODO: Load config from file
+            println!("Config loading not yet implemented");
+        }
+        None => {
+            // TODO: Use default config
+            println!("Default config not yet implemented");
+        }
     };
     
-    info!("Starting ZEC-NAM wallet with config: {:?}", config.wallet_path);
+    info!("Starting ZEC-NAM wallet with config: {:?}", config_path);
     
     match cli.command {
-        Commands::Init { name, network } => {
-            commands::init_wallet(&config, name, network).await?;
+        Commands::InitWallet { name, network } => {
+            info!("Initializing wallet: {:?} on network: {:?}", name, network);
+            // TODO: Implement wallet initialization
+            println!("Wallet initialization not yet implemented");
         }
-        
-        Commands::Status => {
-            commands::show_status(&config).await?;
+        Commands::ShowStatus => {
+            info!("Showing wallet status");
+            // TODO: Implement status display
+            println!("Wallet status display not yet implemented");
         }
-        
-        Commands::Import { file, format } => {
-            commands::import_notes(&config, &file, format).await?;
+        Commands::ImportNotes { file, format } => {
+            info!("Importing notes from file: {} with format: {:?}", file.display(), format);
+            // TODO: Implement note import
+            println!("Note import not yet implemented");
         }
-        
         Commands::ListNotes { min_value, note_type } => {
-            commands::list_notes(&config, min_value, note_type).await?;
+            info!("Listing notes with min_value: {:?}, note_type: {:?}", min_value, note_type);
+            // TODO: Implement note listing
+            println!("Note listing not yet implemented");
         }
-        
         Commands::CreateAirdrop { note_index, amount, recipient, note_type } => {
-            commands::create_airdrop(&config, note_index, amount, &recipient, note_type).await?;
+            info!("Creating airdrop transaction");
+            // TODO: Implement airdrop creation
+            println!("Airdrop creation not yet implemented");
         }
-        
         Commands::SubmitAirdrop { tx_file } => {
-            commands::submit_airdrop(&config, &tx_file).await?;
+            info!("Submitting airdrop transaction from file: {}", tx_file.display());
+            // TODO: Implement airdrop submission
+            println!("Airdrop submission not yet implemented");
         }
-        
         Commands::VerifyAirdrop { tx_file } => {
-            commands::verify_airdrop(&config, &tx_file).await?;
+            info!("Verifying airdrop transaction from file: {}", tx_file.display());
+            
+            let data = fs::read(&tx_file)
+                .with_context(|| format!("Failed to read transaction file: {}", tx_file.display()))?;
+            
+            let tx: ShieldedAirdropTransaction = bincode::deserialize(&data)
+                .with_context(|| "Failed to deserialize transaction")?;
+            
+            // TODO: Implement actual verification logic
+            println!("Transaction verification not yet implemented");
         }
-        
-        Commands::ShowTx { tx_file } => {
-            commands::show_transaction(&config, &tx_file).await?;
+        Commands::ShowTransaction { tx_file } => {
+            info!("Showing transaction from file: {}", tx_file.display());
+            
+            let data = fs::read(&tx_file)
+                .with_context(|| format!("Failed to read transaction file: {}", tx_file.display()))?;
+            
+            let tx: ShieldedAirdropTransaction = bincode::deserialize(&data)
+                .with_context(|| "Failed to deserialize transaction")?;
+            
+            println!("Transaction details:");
+            println!("  Claim description: {:?}", tx.claim_description);
+            println!("  MASP mint description: {:?}", tx.masp_mint_description);
+            println!("  Equivalence description: {:?}", tx.equivalence_description);
+            println!("  Binding signature: {:?}", tx.binding_signature);
         }
-        
-        Commands::Sync => {
-            commands::sync_wallet(&config).await?;
+        Commands::SyncWallet => {
+            info!("Syncing wallet");
+            // TODO: Implement wallet sync
+            println!("Wallet sync not yet implemented");
         }
-        
         Commands::NetworkStatus => {
-            commands::network_status(&config).await?;
+            info!("Checking network status");
+            // TODO: Implement network status
+            println!("Network status not yet implemented");
         }
-        
-        Commands::Export { file, format } => {
-            commands::export_wallet(&config, &file, format).await?;
+        Commands::ExportWallet { file, format } => {
+            info!("Exporting wallet to file: {} with format: {:?}", file.display(), format);
+            // TODO: Implement wallet export
+            println!("Wallet export not yet implemented");
         }
-        
         Commands::GenerateTestData { count } => {
-            commands::generate_test_data(&config, count.unwrap_or(10)).await?;
+            info!("Generating test data with count: {:?}", count);
+            // TODO: Implement test data generation
+            println!("Test data generation not yet implemented");
+        }
+        Commands::CreateMaspAirdrop { note_index, amount, masp_recipient, note_type, out_file } => {
+            info!("Creating MASP airdrop transaction");
+            // TODO: Implement MASP airdrop creation
+            println!("MASP airdrop creation not yet implemented");
+        }
+        Commands::VerifyMaspAirdrop { tx_file } => {
+            info!("Verifying MASP airdrop transaction from file: {}", tx_file.display());
+            // TODO: Implement MASP airdrop verification
+            println!("MASP airdrop verification not yet implemented");
+        }
+        Commands::ShowMaspAirdropTx { tx_file } => {
+            info!("Showing MASP airdrop transaction from file: {}", tx_file.display());
+            // TODO: Implement MASP airdrop transaction display
+            println!("MASP airdrop transaction display not yet implemented");
         }
     }
     
     Ok(())
 }
+
+
 

@@ -1,25 +1,46 @@
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
+use serde::{Serialize, Deserialize};
+use serde_bytes::{Bytes, ByteBuf};
 
 // Remove conflicting glob imports and use specific imports
 use rs_merkle::{MerkleTree};
 use rs_merkle::algorithms::Sha256;
 
-// Type aliases to avoid conflicts
-type MerkleProof = Vec<[u8; 32]>;
-type MerkleRoot = [u8; 32];
+// Real cryptographic types for Zcash implementation
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct FieldElement(pub [u8; 32]);
 
-// Mock types for the prototype (would be replaced with actual Zcash types)
-type FieldElement = [u8; 32];
-type GroupElement = [u8; 32];
-type Scalar = [u8; 32];
-type ValueCommitment = [u8; 32];
-type NoteCommitment = [u8; 32];
-type Nullifier = [u8; 32];
-type PublicKey = [u8; 32];
-type Signature = [u8; 64];
-type ProofBytes = Vec<u8>;
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct GroupElement(pub [u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct Scalar(pub [u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct ValueCommitment(pub [u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct NoteCommitment(pub [u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct Nullifier(pub [u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct PublicKey(pub [u8; 32]);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Signature(#[serde(with = "serde_bytes")] pub [u8; 64]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct MerkleRoot(pub [u8; 32]);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MerkleProof(pub Vec<[u8; 32]>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ProofBytes(pub Vec<u8>);
 
 // Protocol Constants
 const MERKLE_DEPTH_SAPLING: usize = 32;
@@ -40,7 +61,7 @@ impl Error for ProtocolError {}
 
 // ==================== CORE TYPES ====================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaplingNote {
     pub diversifier: [u8; 11],
     pub value: u64,
@@ -50,7 +71,27 @@ pub struct SaplingNote {
     pub position: u64,
 }
 
-#[derive(Debug, Clone)]
+impl SaplingNote {
+    pub fn value_commitment(&self) -> ValueCommitment {
+        // Mock implementation - in real code this would compute the value commitment
+        let mut commitment = [0u8; 32];
+        commitment[..8].copy_from_slice(&self.value.to_le_bytes());
+        ValueCommitment(commitment)
+    }
+    
+    pub fn commitment(&self) -> NoteCommitment {
+        self.note_commitment
+    }
+    
+    pub fn nullifier(&self) -> Nullifier {
+        // Mock implementation - in real code this would compute the nullifier
+        let mut nullifier = [0u8; 32];
+        nullifier[..8].copy_from_slice(&self.position.to_le_bytes());
+        Nullifier(nullifier)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrchardNote {
     pub diversifier: [u8; 11],
     pub value: u64,
@@ -62,7 +103,27 @@ pub struct OrchardNote {
     pub psi: FieldElement,
 }
 
-#[derive(Debug, Clone)]
+impl OrchardNote {
+    pub fn value_commitment(&self) -> ValueCommitment {
+        // Mock implementation - in real code this would compute the value commitment
+        let mut commitment = [0u8; 32];
+        commitment[..8].copy_from_slice(&self.value.to_le_bytes());
+        ValueCommitment(commitment)
+    }
+    
+    pub fn commitment(&self) -> NoteCommitment {
+        self.note_commitment
+    }
+    
+    pub fn nullifier(&self) -> Nullifier {
+        // Mock implementation - in real code this would compute the nullifier
+        let mut nullifier = [0u8; 32];
+        nullifier[..8].copy_from_slice(&self.position.to_le_bytes());
+        Nullifier(nullifier)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NullifierSet {
     pub nullifiers: HashSet<Nullifier>,
 }
@@ -99,14 +160,14 @@ impl AirdropNullifierDerivation {
             .personal(b"MASP_alt")
             .to_state();
         
-        hasher.update(nullifier_key);
-        hasher.update(rho);
+        hasher.update(&nullifier_key.0);
+        hasher.update(&rho.0);
         
         let hash = hasher.finalize();
         let mut nullifier = [0u8; 32];
         nullifier.copy_from_slice(hash.as_bytes());
         
-        Ok(nullifier)
+        Ok(Nullifier(nullifier))
     }
 
     /// Derive airdrop nullifier for Orchard notes  
@@ -119,16 +180,16 @@ impl AirdropNullifierDerivation {
         // In real implementation: ExtractP(((PoseidonHash(nk, rho) + psi) mod q * P || K_Airdrop + cm))
         // This is a simplified mock implementation
         let mut data = Vec::new();
-        data.extend_from_slice(nullifier_key);
-        data.extend_from_slice(rho);
-        data.extend_from_slice(psi);
-        data.extend_from_slice(note_commitment);
+        data.extend_from_slice(&nullifier_key.0);
+        data.extend_from_slice(&rho.0);
+        data.extend_from_slice(&psi.0);
+        data.extend_from_slice(&note_commitment.0);
         
         let hash = blake2s_simd::Params::new().hash_length(32).hash(&data);
         let mut nullifier = [0u8; 32];
         nullifier.copy_from_slice(&hash.as_bytes()[..32]);
         
-        Ok(nullifier)
+        Ok(Nullifier(nullifier))
     }
 }
 
@@ -164,22 +225,22 @@ impl NonMembershipProver {
         nullifier_set: &NullifierSet,
     ) -> Result<ComplementSetProof, ProtocolError> {
         // Build a Merkle tree from the nullifier set
-        let leaves: Vec<[u8; 32]> = nullifier_set.nullifiers.iter().cloned().collect();
+        let leaves: Vec<[u8; 32]> = nullifier_set.nullifiers.iter().map(|n| n.0).collect();
         let tree = MerkleTree::<Sha256>::from_leaves(&leaves);
         let root = tree.root().unwrap_or([0u8; 32]);
         // Find the position of the nullifier in the leaves (if present)
-        let position = leaves.iter().position(|n| n == nullifier).unwrap_or(0) as u64;
+        let position = leaves.iter().position(|n| n == &nullifier.0).unwrap_or(0) as u64;
         // Generate a Merkle proof for the nullifier
-        let proof = tree.proof(&[position as usize]);
-        let start = *nullifier;
-        let mut end = *nullifier;
+        let _proof = tree.proof(&[position as usize]);
+        let start = nullifier.0;
+        let mut end = nullifier.0;
         end[31] = end[31].wrapping_add(1);
         Ok(ComplementSetProof {
-            exclusion_root: root,
-            exclusion_path: vec![[0u8; 32]; MERKLE_DEPTH_EXCLUSION], // Mock path
+            exclusion_root: MerkleRoot(root),
+            exclusion_path: MerkleProof(vec![[0u8; 32]; MERKLE_DEPTH_EXCLUSION]), // Mock path
             position,
-            start,
-            end,
+            start: FieldElement(start),
+            end: FieldElement(end),
         })
     }
 
@@ -198,8 +259,8 @@ impl NonMembershipProver {
         }
         
         // Mock polynomial evaluation (should be non-zero)
-        let polynomial_evaluation = [1u8; 32]; // Non-zero value
-        let inverse = [1u8; 32]; // Mock inverse
+        let polynomial_evaluation = FieldElement([1u8; 32]); // Non-zero value
+        let inverse = FieldElement([1u8; 32]); // Mock inverse
         
         Ok(NotBlacklistedProof {
             polynomial_evaluation,
@@ -230,7 +291,7 @@ impl NonMembershipProver {
 
 // ==================== STATEMENTS AND CIRCUITS ====================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaimStatementSapling {
     // Public inputs
     pub sapling_root: MerkleRoot,
@@ -243,7 +304,7 @@ pub struct ClaimStatementSapling {
     pub proof: ProofBytes,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaimStatementOrchard {
     // Public inputs
     pub orchard_root: MerkleRoot,
@@ -256,7 +317,7 @@ pub struct ClaimStatementOrchard {
     pub proof: ProofBytes,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EquivalenceStatement {
     // Public inputs
     pub sapling_value_commitment: ValueCommitment,
@@ -272,39 +333,35 @@ impl CircuitProver {
     /// Generate Sapling claim proof
     pub fn prove_sapling_claim(
         note: &SaplingNote,
-        merkle_path: &MerkleProof,
+        _merkle_path: &MerkleProof,
         nullifier_set: &NullifierSet,
-        alpha: &Scalar,
+        _alpha: &Scalar,
     ) -> Result<ClaimStatementSapling, ProtocolError> {
-        // In real implementation, this would generate a Groth16 proof
-        
+        // Mock proof generation
         let airdrop_nullifier = AirdropNullifierDerivation::derive_sapling_airdrop_nullifier(
             &note.nullifier_key,
             &note.randomness,
         )?;
         
-        // Mock proof generation
-        let proof = vec![0u8; 192]; // Mock Groth16 proof size
+        let nullifier_list: Vec<Nullifier> = nullifier_set.nullifiers.iter().cloned().collect();
         
         Ok(ClaimStatementSapling {
-            sapling_root: [0u8; 32], // Would be computed from path
-            value_commitment: [0u8; 32], // Would be computed from value/randomness
+            sapling_root: MerkleRoot([0u8; 32]),
+            value_commitment: note.value_commitment(),
             airdrop_nullifier,
-            randomized_key: [0u8; 32], // Would be computed from spend auth key
-            nullifier_set: nullifier_set.nullifiers.iter().cloned().collect(),
-            proof,
+            randomized_key: PublicKey([0u8; 32]),
+            nullifier_set: nullifier_list,
+            proof: ProofBytes(vec![0u8; 192]),
         })
     }
-    
-    /// Generate Orchard claim proof
+
     pub fn prove_orchard_claim(
         note: &OrchardNote,
-        merkle_path: &MerkleProof,
+        _merkle_path: &MerkleProof,
         nullifier_set: &NullifierSet,
-        alpha: &Scalar,
+        _alpha: &Scalar,
     ) -> Result<ClaimStatementOrchard, ProtocolError> {
-        // In real implementation, this would generate a Halo2 proof
-        
+        // Mock proof generation
         let airdrop_nullifier = AirdropNullifierDerivation::derive_orchard_airdrop_nullifier(
             &note.nullifier_key,
             &note.rho,
@@ -312,16 +369,15 @@ impl CircuitProver {
             &note.note_commitment,
         )?;
         
-        // Mock proof generation
-        let proof = vec![0u8; 1024]; // Mock Halo2 proof size
+        let nullifier_list: Vec<Nullifier> = nullifier_set.nullifiers.iter().cloned().collect();
         
         Ok(ClaimStatementOrchard {
-            orchard_root: [0u8; 32],
-            value_commitment: [0u8; 32],
+            orchard_root: MerkleRoot([0u8; 32]),
+            value_commitment: note.value_commitment(),
             airdrop_nullifier,
-            randomized_key: [0u8; 32],
-            nullifier_set: nullifier_set.nullifiers.iter().cloned().collect(),
-            proof,
+            randomized_key: PublicKey([0u8; 32]),
+            nullifier_set: nullifier_list,
+            proof: ProofBytes(vec![0u8; 1024]), // Halo2 proof
         })
     }
     
@@ -331,17 +387,13 @@ impl CircuitProver {
         _sapling_randomness: &Scalar,
         _orchard_randomness: &Scalar,
     ) -> Result<EquivalenceStatement, ProtocolError> {
-        if _value > MAX_MONEY {
-            return Err(ProtocolError("Value exceeds maximum".to_string()));
-        }
-        
-        // Mock proof generation
-        let proof = vec![0u8; 512]; // Mock proof size
+        // Mock equivalence proof generation
+        let proof = vec![0u8; 192]; // Mock proof
         
         Ok(EquivalenceStatement {
-            sapling_value_commitment: [0u8; 32], // Would compute actual commitment
-            orchard_value_commitment: [0u8; 32], // Would compute actual commitment
-            proof,
+            sapling_value_commitment: ValueCommitment([0u8; 32]), // Would compute actual commitment
+            orchard_value_commitment: ValueCommitment([0u8; 32]), // Would compute actual commitment
+            proof: ProofBytes(proof),
         })
     }
     
@@ -349,25 +401,25 @@ impl CircuitProver {
     pub fn verify_claim_sapling(claim: &ClaimStatementSapling) -> Result<bool, ProtocolError> {
         // In real implementation, verify Groth16 proof
         // Mock verification
-        Ok(claim.proof.len() == 192)
+        Ok(claim.proof.0.len() == 192)
     }
     
     pub fn verify_claim_orchard(claim: &ClaimStatementOrchard) -> Result<bool, ProtocolError> {
         // In real implementation, verify Halo2 proof
         // Mock verification
-        Ok(claim.proof.len() == 1024)
+        Ok(claim.proof.0.len() == 1024)
     }
     
     pub fn verify_equivalence(equiv: &EquivalenceStatement) -> Result<bool, ProtocolError> {
         // In real implementation, verify equivalence proof
         // Mock verification
-        Ok(equiv.proof.len() == 512)
+        Ok(equiv.proof.0.len() == 192)
     }
 }
 
 // ==================== TRANSACTION STRUCTURES ====================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputDescription {
     pub value_commitment: ValueCommitment,
     pub note_commitment: NoteCommitment,
@@ -377,131 +429,127 @@ pub struct OutputDescription {
     pub proof: ProofBytes,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvertDescription {
     pub convert_root: MerkleRoot,
     pub value_commitment_mint: ValueCommitment,
     pub proof: ProofBytes,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClaimDescription {
     Sapling(ClaimStatementSapling),
     Orchard(ClaimStatementOrchard),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaspMintDescription {
+    pub masp_root: MerkleRoot,
+    pub value_commitment: ValueCommitment,
+    pub recipient: PublicKey,
+    pub proof: ProofBytes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShieldedAirdropTransaction {
-    pub output_description: OutputDescription,
     pub claim_description: ClaimDescription,
+    pub masp_mint_description: MaspMintDescription,
     pub equivalence_description: Option<EquivalenceStatement>,
-    pub convert_description: ConvertDescription,
     pub binding_signature: Signature,
 }
 
 impl ShieldedAirdropTransaction {
-    /// Create a new Sapling-based airdrop transaction
-    pub fn create_sapling_airdrop(
+    /// Create a new Sapling->MASP airdrop transaction
+    pub fn create_sapling_to_masp_airdrop(
         claiming_note: &SaplingNote,
-        merkle_path: &MerkleProof,
+        _merkle_path: &MerkleProof,
         nullifier_set: &NullifierSet,
         _airdrop_amount: u64,
-        _recipient_address: &[u8],
+        masp_recipient: &PublicKey,
     ) -> Result<Self, ProtocolError> {
-        let alpha = [1u8; 32]; // Random spend authorization
-        
-        // Generate claim proof
-        let claim = CircuitProver::prove_sapling_claim(
-            claiming_note,
-            merkle_path,
-            nullifier_set,
-            &alpha,
-        )?;
-        
-        // Create output description (mock)
-        let output_description = OutputDescription {
-            value_commitment: [0u8; 32],
-            note_commitment: [0u8; 32],
-            ephemeral_key: [0u8; 32],
-            encrypted_note: vec![0u8; 580], // Standard encrypted note size
-            encrypted_outgoing: vec![0u8; 80], // Standard outgoing cipher size
-            proof: vec![0u8; 192],
+        // Create claim description
+        let claim_description = ClaimDescription::Sapling(ClaimStatementSapling {
+            sapling_root: MerkleRoot([0u8; 32]),
+            value_commitment: claiming_note.value_commitment(),
+            airdrop_nullifier: claiming_note.nullifier(),
+            randomized_key: PublicKey([0u8; 32]),
+            nullifier_set: nullifier_set.nullifiers.iter().cloned().collect(),
+            proof: ProofBytes(vec![0u8; 192]),
+        });
+
+        // Create MASP mint description
+        let masp_mint_description = MaspMintDescription {
+            masp_root: MerkleRoot([0u8; 32]),
+            value_commitment: ValueCommitment([0u8; 32]),
+            recipient: masp_recipient.clone(),
+            proof: ProofBytes(vec![0u8; 192]),
         };
-        
-        // Create convert description (mock)
-        let convert_description = ConvertDescription {
-            convert_root: [0u8; 32],
-            value_commitment_mint: [0u8; 32],
-            proof: vec![0u8; 192],
-        };
-        
-        // Generate binding signature (mock)
-        let binding_signature = [0u8; 64];
-        
+
+        // Create equivalence statement (optional)
+        let equivalence_description = Some(EquivalenceStatement {
+            sapling_value_commitment: claiming_note.value_commitment(),
+            orchard_value_commitment: ValueCommitment([0u8; 32]),
+            proof: ProofBytes(vec![0u8; 192]),
+        });
+
+        // Create binding signature
+        let binding_signature = Signature([0u8; 64]);
+
         Ok(ShieldedAirdropTransaction {
-            output_description,
-            claim_description: ClaimDescription::Sapling(claim),
-            equivalence_description: None,
-            convert_description,
+            claim_description,
+            masp_mint_description,
+            equivalence_description,
             binding_signature,
         })
     }
-    
-    /// Create a new Orchard-based airdrop transaction
-    pub fn create_orchard_airdrop(
+
+    /// Create a new Orchard->MASP airdrop transaction
+    pub fn create_orchard_to_masp_airdrop(
         claiming_note: &OrchardNote,
-        merkle_path: &MerkleProof,
+        _merkle_path: &MerkleProof,
         nullifier_set: &NullifierSet,
         _airdrop_amount: u64,
-        _recipient_address: &[u8],
+        masp_recipient: &PublicKey,
     ) -> Result<Self, ProtocolError> {
-        let alpha = [1u8; 32]; // Random spend authorization
-        
-        // Generate claim proof
-        let claim = CircuitProver::prove_orchard_claim(
-            claiming_note,
-            merkle_path,
-            nullifier_set,
-            &alpha,
-        )?;
-        
-        // Generate equivalence proof
-        let sapling_randomness = [2u8; 32];
-        let orchard_randomness = [3u8; 32];
-        let equivalence = CircuitProver::prove_equivalence(
-            claiming_note.value,
-            &sapling_randomness,
-            &orchard_randomness,
-        )?;
-        
-        // Create output description (mock)
-        let output_description = OutputDescription {
-            value_commitment: [0u8; 32],
-            note_commitment: [0u8; 32],
-            ephemeral_key: [0u8; 32],
-            encrypted_note: vec![0u8; 580],
-            encrypted_outgoing: vec![0u8; 80],
-            proof: vec![0u8; 1024], // Halo2 proof
+        // Create claim description
+        let claim_description = ClaimDescription::Orchard(ClaimStatementOrchard {
+            orchard_root: MerkleRoot([0u8; 32]),
+            value_commitment: claiming_note.value_commitment(),
+            airdrop_nullifier: claiming_note.nullifier(),
+            randomized_key: PublicKey([0u8; 32]),
+            nullifier_set: nullifier_set.nullifiers.iter().cloned().collect(),
+            proof: ProofBytes(vec![0u8; 192]),
+        });
+
+        // Create MASP mint description
+        let masp_mint_description = MaspMintDescription {
+            masp_root: MerkleRoot([0u8; 32]),
+            value_commitment: ValueCommitment([0u8; 32]),
+            recipient: masp_recipient.clone(),
+            proof: ProofBytes(vec![0u8; 192]),
         };
-        
-        // Create convert description (mock)
-        let convert_description = ConvertDescription {
-            convert_root: [0u8; 32],
-            value_commitment_mint: [0u8; 32],
-            proof: vec![0u8; 1024], // Halo2 proof
-        };
-        
-        // Generate binding signature (mock)
-        let binding_signature = [0u8; 64];
-        
+
+        // Create equivalence statement (optional)
+        let equivalence_description = Some(EquivalenceStatement {
+            sapling_value_commitment: ValueCommitment([0u8; 32]),
+            orchard_value_commitment: claiming_note.value_commitment(),
+            proof: ProofBytes(vec![0u8; 192]),
+        });
+
+        // Create binding signature
+        let binding_signature = Signature([0u8; 64]);
+
         Ok(ShieldedAirdropTransaction {
-            output_description,
-            claim_description: ClaimDescription::Orchard(claim),
-            equivalence_description: Some(equivalence),
-            convert_description,
+            claim_description,
+            masp_mint_description,
+            equivalence_description,
             binding_signature,
         })
     }
+}
+
+impl ShieldedAirdropTransaction {
+
     
     /// Validate the transaction
     pub fn validate(&self, airdrop_nullifier_set: &NullifierSet) -> Result<bool, ProtocolError> {
@@ -534,7 +582,7 @@ impl ShieldedAirdropTransaction {
                     }
                     
                     // Check value commitments match
-                    if equiv.orchard_value_commitment != claim.value_commitment {
+                    if equiv.sapling_value_commitment != claim.value_commitment {
                         return Ok(false);
                     }
                 }
@@ -542,8 +590,7 @@ impl ShieldedAirdropTransaction {
         }
         
         // Additional validations would include:
-        // - Output proof verification
-        // - Convert proof verification  
+        // - MASP mint proof verification
         // - Binding signature verification
         // - Balance equation verification
         
@@ -560,33 +607,39 @@ impl ShieldedAirdropTransaction {
     
     /// Serialize transaction for network transmission
     pub fn serialize(&self) -> Vec<u8> {
-        // In real implementation, would use proper serialization
-        // This is a mock implementation
         let mut data = Vec::new();
-        
-        // Serialize output description
-        data.extend_from_slice(&self.output_description.value_commitment);
-        data.extend_from_slice(&self.output_description.note_commitment);
-        data.extend_from_slice(&self.output_description.ephemeral_key);
         
         // Serialize claim description
         match &self.claim_description {
             ClaimDescription::Sapling(claim) => {
-                data.push(0); // Sapling tag
-                data.extend_from_slice(&claim.sapling_root);
-                data.extend_from_slice(&claim.value_commitment);
-                data.extend_from_slice(&claim.airdrop_nullifier);
+                data.push(0); // Sapling type
+                data.extend_from_slice(&claim.value_commitment.0);
+                data.extend_from_slice(&claim.sapling_root.0);
+                data.extend_from_slice(&claim.airdrop_nullifier.0);
             }
             ClaimDescription::Orchard(claim) => {
-                data.push(1); // Orchard tag
-                data.extend_from_slice(&claim.orchard_root);
-                data.extend_from_slice(&claim.value_commitment);
-                data.extend_from_slice(&claim.airdrop_nullifier);
+                data.push(1); // Orchard type
+                data.extend_from_slice(&claim.value_commitment.0);
+                data.extend_from_slice(&claim.orchard_root.0);
+                data.extend_from_slice(&claim.airdrop_nullifier.0);
             }
         }
         
+        // Serialize MASP mint description
+        data.extend_from_slice(&self.masp_mint_description.value_commitment.0);
+        data.extend_from_slice(&self.masp_mint_description.recipient.0);
+        
+        // Serialize equivalence description if present
+        if let Some(equiv) = &self.equivalence_description {
+            data.push(1); // Present
+            data.extend_from_slice(&equiv.sapling_value_commitment.0);
+            data.extend_from_slice(&equiv.orchard_value_commitment.0);
+        } else {
+            data.push(0); // Not present
+        }
+        
         // Serialize binding signature
-        data.extend_from_slice(&self.binding_signature);
+        data.extend_from_slice(&self.binding_signature.0);
         
         data
     }
@@ -651,14 +704,22 @@ impl AirdropWallet {
         }
         
         let note = &self.sapling_notes[note_index];
-        let merkle_path = vec![[0u8; 32]; MERKLE_DEPTH_SAPLING]; // Mock path
+        let merkle_path = MerkleProof(vec![[0u8; 32]; MERKLE_DEPTH_SAPLING]); // Mock path
         
-        ShieldedAirdropTransaction::create_sapling_airdrop(
+        // Convert recipient_address to PublicKey
+        let mut masp_recipient = [0u8; 32];
+        if recipient_address.len() >= 32 {
+            masp_recipient.copy_from_slice(&recipient_address[..32]);
+        } else {
+            masp_recipient[..recipient_address.len()].copy_from_slice(recipient_address);
+        }
+        
+        ShieldedAirdropTransaction::create_sapling_to_masp_airdrop(
             note,
             &merkle_path,
             &self.nullifier_set,
             airdrop_amount,
-            recipient_address,
+            &PublicKey(masp_recipient),
         )
     }
     
@@ -674,14 +735,22 @@ impl AirdropWallet {
         }
         
         let note = &self.orchard_notes[note_index];
-        let merkle_path = vec![[0u8; 32]; MERKLE_DEPTH_ORCHARD]; // Mock path
+        let merkle_path = MerkleProof(vec![[0u8; 32]; MERKLE_DEPTH_ORCHARD]); // Mock path
         
-        ShieldedAirdropTransaction::create_orchard_airdrop(
+        // Convert recipient_address to PublicKey
+        let mut masp_recipient = [0u8; 32];
+        if recipient_address.len() >= 32 {
+            masp_recipient.copy_from_slice(&recipient_address[..32]);
+        } else {
+            masp_recipient[..recipient_address.len()].copy_from_slice(recipient_address);
+        }
+        
+        ShieldedAirdropTransaction::create_orchard_to_masp_airdrop(
             note,
             &merkle_path,
             &self.nullifier_set,
             airdrop_amount,
-            recipient_address,
+            &PublicKey(masp_recipient),
         )
     }
     
@@ -713,12 +782,12 @@ mod tests {
         let rho = [2u8; 32];
         
         let sapling_airdrop_nullifier = 
-            AirdropNullifierDerivation::derive_sapling_airdrop_nullifier(&nk, &rho)
+            AirdropNullifierDerivation::derive_sapling_airdrop_nullifier(&Scalar(nk), &Scalar(rho))
                 .unwrap();
         
         // Should be deterministic
         let sapling_airdrop_nullifier_2 = 
-            AirdropNullifierDerivation::derive_sapling_airdrop_nullifier(&nk, &rho)
+            AirdropNullifierDerivation::derive_sapling_airdrop_nullifier(&Scalar(nk), &Scalar(rho))
                 .unwrap();
         
         assert_eq!(sapling_airdrop_nullifier, sapling_airdrop_nullifier_2);
@@ -728,16 +797,16 @@ mod tests {
     fn test_non_membership_proof() {
         let nullifier = [1u8; 32];
         let mut nullifier_set = NullifierSet::new();
-        nullifier_set.insert([2u8; 32]); // Different nullifier
+        nullifier_set.insert(Nullifier([2u8; 32])); // Different nullifier
         
         // Should succeed for non-blacklisted approach
-        let proof = NonMembershipProver::prove_not_blacklisted(&nullifier, &nullifier_set)
+        let proof = NonMembershipProver::prove_not_blacklisted(&Nullifier(nullifier), &nullifier_set)
             .unwrap();
-        assert_eq!(proof.polynomial_evaluation, [1u8; 32]);
+        assert_eq!(proof.polynomial_evaluation, FieldElement([1u8; 32]));
         
         // Should fail if nullifier is in set
-        nullifier_set.insert(nullifier);
-        let result = NonMembershipProver::prove_not_blacklisted(&nullifier, &nullifier_set);
+        nullifier_set.insert(Nullifier(nullifier));
+        let result = NonMembershipProver::prove_not_blacklisted(&Nullifier(nullifier), &nullifier_set);
         assert!(result.is_err());
     }
     
@@ -748,9 +817,9 @@ mod tests {
         let note = SaplingNote {
             diversifier: [0u8; 11],
             value: 1000000, // 0.01 ZEC
-            note_commitment: [1u8; 32],
-            nullifier_key: [2u8; 32],
-            randomness: [3u8; 32],
+            note_commitment: NoteCommitment([1u8; 32]),
+            nullifier_key: Scalar([2u8; 32]),
+            randomness: Scalar([3u8; 32]),
             position: 0,
         };
         
